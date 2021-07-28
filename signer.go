@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+//go test -v -race ./...
+
 func ExecutePipeline(jobs4run ...job) {
 	in := make(chan interface{})
 	var wg sync.WaitGroup
@@ -26,29 +28,26 @@ func executor(j job, in, out chan interface{}, wg *sync.WaitGroup) {
 	defer close(out)
 	start := time.Now()
 	j(in, out)
-
 	end := time.Since(start)
 	fmt.Println(end)
 }
 
 func SingleHash(in, out chan interface{}) {
-	wg := new(sync.WaitGroup)
+	var wg sync.WaitGroup
+
 	var mu = &sync.Mutex{}
-	var res string
 	for inputValue := range in {
 		ch := make(chan interface{}, 1)
 		wg.Add(1)
-		go shWorker(inputValue, ch, mu, wg)
-		res = (<-ch).(string)
-		fmt.Println(res)
-		out <- res
+		go shWorker(inputValue, ch, mu, &wg)
+		out = ch
 	}
 	wg.Wait()
 }
 
-func shWorker(inputValue interface{}, out chan interface{}, mu *sync.Mutex, group *sync.WaitGroup) {
+func shWorker(inputValue interface{}, ch chan interface{}, mu *sync.Mutex, group *sync.WaitGroup) {
 	defer group.Done()
-	defer close(out)
+	//defer close(ch)
 	var value string
 	ch1 := make(chan interface{}, 1)
 	ch2 := make(chan interface{}, 1)
@@ -64,9 +63,10 @@ func shWorker(inputValue interface{}, out chan interface{}, mu *sync.Mutex, grou
 	go crc32work(ch1, value)
 	go crc32work(ch2, res2)
 	res := (<-ch1).(string) + "~" + (<-ch2).(string)
+	fmt.Println(res)
 	close(ch1)
 	close(ch2)
-	out <- res
+	ch <- res
 }
 
 func crc32work(ch chan interface{}, value string) {
@@ -74,8 +74,9 @@ func crc32work(ch chan interface{}, value string) {
 }
 
 func MultiHash(in, out chan interface{}) {
-	wg := &sync.WaitGroup{}
+	var wg sync.WaitGroup
 	var value string
+	fmt.Println("im here")
 	for inputValue := range in {
 		switch inputValue.(type) {
 		case int:
@@ -86,7 +87,7 @@ func MultiHash(in, out chan interface{}) {
 		fmt.Println(value)
 		ch := make(chan interface{}, 1)
 		wg.Add(1)
-		go mhWorker(value, ch, wg)
+		go mhWorker(value, ch, &wg)
 		out <- ch
 	}
 	wg.Wait()
@@ -94,6 +95,7 @@ func MultiHash(in, out chan interface{}) {
 
 func mhWorker(value string, out chan interface{}, group *sync.WaitGroup) {
 	defer group.Done()
+	defer close(out)
 	wg := &sync.WaitGroup{}
 	var res string
 	for i := 0; i < 5; i++ {
@@ -101,10 +103,15 @@ func mhWorker(value string, out chan interface{}, group *sync.WaitGroup) {
 		wg.Add(1)
 		go multiWork(i, value, ch, wg)
 		res += (<-ch).(string)
+		fmt.Println(<-ch)
 	}
 	wg.Wait()
 	fmt.Println(res)
-	out <- res
+	out <- 0
+}
+
+func resultAdd(in, out chan interface{}) {
+
 }
 
 func multiWork(i int, val string, ch chan interface{}, group *sync.WaitGroup) {
@@ -119,7 +126,7 @@ func CombineResults(in, out chan interface{}) {
 		if !ok {
 			continue
 		}
-		results = append(results, r) // toDo
+		results = append(results, r)
 	}
 	sort.Strings(results)
 	out <- strings.Join(results, "_")
@@ -127,7 +134,7 @@ func CombineResults(in, out chan interface{}) {
 
 func main() {
 
-	inputData := []int{0, 1, 1, 2, 3, 5, 8}
+	inputData := []int{0, 1}
 
 	hashSignJobs := []job{
 		job(func(in, out chan interface{}) {
